@@ -2,6 +2,7 @@ package mails
 
 import (
 	"bufio"
+	"crypto/tls"
 	"time"
 )
 
@@ -12,6 +13,8 @@ type Mails struct {
 	TagSeq     int
 	Writer     *bufio.Writer
 	Reader     *bufio.Reader
+	Conn       *tls.Conn
+	Emails     []Email
 }
 
 type Email struct {
