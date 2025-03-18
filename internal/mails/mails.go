@@ -76,7 +76,7 @@ func (m *MailClient) ListMailBox() error {
 }
 
 func (m *MailClient) SelectMailBox(mailbox string) error {
-	code, err := m.SendMessage("SELECT", mailbox)
+	code, err := m.SendMessage("SELECT", fmt.Sprintf("\"%s\"", mailbox))
 	if err != nil {
 		return err
 	}
@@ -126,6 +126,7 @@ func (m *MailClient) ReadMessage(code, msgType string) error {
 		if strings.HasPrefix(line, fmt.Sprintf("%s OK", code)) {
 			break
 		} else if strings.HasPrefix(line, fmt.Sprintf("%s BAD", code)) || strings.HasPrefix(line, fmt.Sprintf("%s NO", code)) {
+			fmt.Println(buffer.String())
 			return errors.New("message return bad response")
 		}
 	}

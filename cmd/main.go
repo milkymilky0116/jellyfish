@@ -87,7 +87,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			switch panel.title {
 			case "Category":
 				panel := &m.Panels[m.CurrentPanel]
-				m.Client.SelectMailBox(m.Client.Categories[panel.currentElement])
+				err := m.Client.SelectMailBox(m.Client.Categories[panel.currentElement])
+				if err != nil {
+					log.Println(err)
+				}
 				m.Client.FetchMail(1, 10)
 				mailList := []string{}
 				for _, mail := range m.Client.Emails {

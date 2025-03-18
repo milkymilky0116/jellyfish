@@ -53,6 +53,24 @@ func findEmailContent(content string) ([]Email, error) {
 							return nil, err
 						}
 						email.Date = parsedTime
+					case strings.HasPrefix(rawLines, "FROM:"):
+						decodedStr, err := DecodeMimeContent(strings.TrimPrefix(rawLines, "FROM:"))
+						if err != nil {
+							return nil, err
+						}
+						email.From = decodedStr
+					case strings.HasPrefix(rawLines, "SUBJECT:"):
+						decodedStr, err := DecodeMimeContent(strings.TrimPrefix(rawLines, "SUBJECT:"))
+						if err != nil {
+							return nil, err
+						}
+						subjectStrBuilder.WriteString(decodedStr)
+					case strings.HasPrefix(rawLines, "DATE:"):
+						parsedTime, err := mail.ParseDate(strings.TrimPrefix(rawLines, "DATE: "))
+						if err != nil {
+							return nil, err
+						}
+						email.Date = parsedTime
 					default:
 						decodedStr, err := DecodeMimeContent(rawLines)
 						if err != nil {
