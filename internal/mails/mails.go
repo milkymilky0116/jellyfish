@@ -12,7 +12,7 @@ import (
 	"strings"
 )
 
-func InitMailClient(url string) (*Mails, error) {
+func InitMailClient(url string) (*MailClient, error) {
 	conn, err := tls.Dial("tcp", url, nil)
 	if err != nil {
 		return nil, err
@@ -25,18 +25,19 @@ func InitMailClient(url string) (*Mails, error) {
 	if err != nil {
 		return nil, err
 	}
-
-	code, err := mailsClient.SendMessage("SELECT", "INBOX")
+	err = mailsClient.ListMailBox()
 	if err != nil {
 		return nil, err
 	}
-	mailsClient.ReadMessage(code, "SELECT")
-
+	err = mailsClient.SelectMailBox("INBOX")
+	if err != nil {
+		return nil, err
+	}
 	return mailsClient, nil
 }
 
-func InitMails(conn *tls.Conn) *Mails {
-	return &Mails{
+func InitMails(conn *tls.Conn) *MailClient {
+	return &MailClient{
 		Writer:   bufio.NewWriter(conn),
 		Reader:   bufio.NewReader(conn),
 		Conn:     conn,
@@ -45,12 +46,12 @@ func InitMails(conn *tls.Conn) *Mails {
 	}
 }
 
-func (m *Mails) NextTag() string {
+func (m *MailClient) NextTag() string {
 	m.TagSeq++
 	return fmt.Sprintf("a%03d", m.TagSeq)
 }
 
-func (m *Mails) Login() error {
+func (m *MailClient) Login() error {
 	code, err := m.SendMessage("LOGIN", fmt.Sprintf("\"%s\" \"%s\"", m.Email, m.Password))
 	if err != nil {
 		log.Printf("fail to send message: %v", err)
@@ -62,7 +63,32 @@ func (m *Mails) Login() error {
 	return nil
 }
 
-func (m *Mails) FetchMail(page, offset int) error {
+func (m *MailClient) ListMailBox() error {
+	code, err := m.SendMessage("LIST", "\"\" \"*\"")
+	if err != nil {
+		return err
+	}
+	err = m.ReadMessage(code, "LIST")
+	if err != nil {
+		return err
+	}
+	return nil
+}
+
+func (m *MailClient) SelectMailBox(mailbox string) error {
+	code, err := m.SendMessage("SELECT", mailbox)
+	if err != nil {
+		return err
+	}
+	err = m.ReadMessage(code, "SELECT")
+	if err != nil {
+		return err
+	}
+	return nil
+}
+
+func (m *MailClient) FetchMail(page, offset int) error {
+	m.Emails = []Email{}
 	start := m.TotalMails - ((page - 1) * offset)
 	end := max(start-offset+1, 1)
 	code, err := m.SendMessage("FETCH", fmt.Sprintf("%d:%d (BODY[HEADER.FIELDS (SUBJECT FROM DATE)])", end, start))
@@ -76,7 +102,7 @@ func (m *Mails) FetchMail(page, offset int) error {
 	return nil
 }
 
-func (m *Mails) SendMessage(msgType, msg string) (string, error) {
+func (m *MailClient) SendMessage(msgType, msg string) (string, error) {
 	code := m.NextTag()
 	imapMsg := fmt.Sprintf("%s %s %s\r\n", code, msgType, msg)
 	if _, err := m.Writer.WriteString(imapMsg); err != nil {
@@ -85,7 +111,7 @@ func (m *Mails) SendMessage(msgType, msg string) (string, error) {
 	return code, m.Writer.Flush()
 }
 
-func (m *Mails) ReadMessage(code, msgType string) error {
+func (m *MailClient) ReadMessage(code, msgType string) error {
 	var buffer strings.Builder
 	for {
 		line, err := m.Reader.ReadString('\n')
@@ -124,6 +150,13 @@ func (m *Mails) ReadMessage(code, msgType string) error {
 			return err
 		}
 		m.Emails = append(m.Emails, emailContents...)
+	case "LIST":
+		contents := strings.Join(content, "\n")
+		categories, err := findEmailBox(contents)
+		if err != nil {
+			return err
+		}
+		m.Categories = categories
 	}
 	return nil
 }

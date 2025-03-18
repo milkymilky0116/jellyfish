@@ -6,7 +6,7 @@ import (
 	"time"
 )
 
-type Mails struct {
+type MailClient struct {
 	TotalMails int
 	Email      string
 	Password   string
@@ -15,6 +15,7 @@ type Mails struct {
 	Reader     *bufio.Reader
 	Conn       *tls.Conn
 	Emails     []Email
+	Categories []string
 }
 
 type Email struct {
