@@ -21,10 +21,15 @@ func findEmailContent(content string) ([]Email, error) {
 			continue
 		}
 		start = index
+
+		contentLengthStart := -1
 		for j := start; j < len(content); j++ {
+			if content[j] == '{' {
+				contentLengthStart = j
+			}
 			if content[j] == '}' {
 				end = j
-				contentLength, err := strconv.Atoi(content[end-3 : end])
+				contentLength, err := strconv.Atoi(content[contentLengthStart+1 : end])
 				if err != nil {
 					return nil, err
 				}
