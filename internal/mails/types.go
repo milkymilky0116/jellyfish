@@ -3,9 +3,9 @@ package mails
 import (
 	"bufio"
 	"crypto/tls"
-	"time"
 
 	"github.com/milkymilky0116/jellyfish/internal/db"
+	"github.com/milkymilky0116/jellyfish/internal/repository"
 )
 
 type MailClient struct {
@@ -23,11 +23,5 @@ type MailClient struct {
 type Category struct {
 	TotalMails int
 	Name       string
-	Mails      []Email
-}
-
-type Email struct {
-	Subject string
-	From    string
-	Date    time.Time
+	Mails      []repository.Email
 }

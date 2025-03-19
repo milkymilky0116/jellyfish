@@ -1,34 +1,35 @@
 package main
 
 import (
+	"context"
 	"log"
 	"os"
 
-	tea "github.com/charmbracelet/bubbletea"
 	"github.com/milkymilky0116/jellyfish/internal/db"
 	"github.com/milkymilky0116/jellyfish/internal/mails"
-	"github.com/milkymilky0116/jellyfish/internal/tui"
+	"github.com/milkymilky0116/jellyfish/internal/repository"
 )
 
 func main() {
 	server := os.Getenv("IMAP_URL")
-	badgerDB, err := db.InitBadgerDB()
+	ctx := context.Background()
+	db, err := db.InitSqliteDB(ctx)
 	if err != nil {
 		log.Fatal(err)
 	}
-	repo := db.InitBadgerRepository(badgerDB)
+	repo := repository.New(db)
 	client, err := mails.InitMailClient(server, repo)
 	if err != nil {
 		log.Fatal(err)
 	}
 	defer client.Conn.Close()
-	model, err := tui.InitModel(client)
-	if err != nil {
-		log.Fatal(err)
-	}
-	tui := tea.NewProgram(model)
-	if _, err := tui.Run(); err != nil {
-		log.Fatalf("Fail to run tui: %v", err)
-	}
+	// model, err := tui.InitModel(client)
+	// if err != nil {
+	// 	log.Fatal(err)
+	// }
+	// tui := tea.NewProgram(model)
+	// if _, err := tui.Run(); err != nil {
+	// 	log.Fatalf("Fail to run tui: %v", err)
+	// }
 
 }

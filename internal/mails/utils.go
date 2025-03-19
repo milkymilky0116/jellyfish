@@ -10,84 +10,90 @@ import (
 	"strings"
 	"unicode/utf16"
 
+	"github.com/milkymilky0116/jellyfish/internal/repository"
 	"golang.org/x/net/html/charset"
 )
 
-func findEmailContent(content string) ([]Email, error) {
-	contents := []Email{}
-	for index, letter := range content {
-		start, end := -1, -1
-		if letter != '*' {
-			continue
-		}
-		start = index
-
-		contentLengthStart := -1
-		for j := start; j < len(content); j++ {
-			if content[j] == '{' {
-				contentLengthStart = j
+func findEmailContent(content string) ([]repository.Email, error) {
+	contents := []repository.Email{}
+	if len(content) > 5 {
+		emailDatas := strings.Split(content, "\n* ")
+		emailDatas[0] = emailDatas[0][1:]
+		for _, block := range emailDatas {
+			idIndex := strings.Index(block, "FETCH")
+			id, err := strconv.Atoi(strings.TrimSpace(block[0:idIndex]))
+			if err != nil {
+				return nil, err
 			}
-			if content[j] == '}' {
-				end = j
-				contentLength, err := strconv.Atoi(content[contentLengthStart+1 : end])
-				if err != nil {
-					return nil, err
+			contentLengthStart, end := 0, 0
+			for index, letter := range block {
+				if letter == '{' {
+					contentLengthStart = index
 				}
-				raw := content[end+1 : end+contentLength]
-				emailContents := strings.Split(raw, "\n")
-				email := Email{}
-				var subjectStrBuilder strings.Builder
-				for _, rawLines := range emailContents {
-					rawLines = strings.TrimSpace(rawLines)
-					switch {
-					case strings.HasPrefix(rawLines, "From:"):
-						decodedStr, err := DecodeMimeContent(strings.TrimPrefix(rawLines, "From:"))
-						if err != nil {
-							return nil, err
-						}
-						email.From = decodedStr
-					case strings.HasPrefix(rawLines, "Subject:"):
-						decodedStr, err := DecodeMimeContent(strings.TrimPrefix(rawLines, "Subject:"))
-						if err != nil {
-							return nil, err
-						}
-						subjectStrBuilder.WriteString(decodedStr)
-					case strings.HasPrefix(rawLines, "Date:"):
-						parsedTime, err := mail.ParseDate(strings.TrimPrefix(rawLines, "Date: "))
-						if err != nil {
-							return nil, err
-						}
-						email.Date = parsedTime
-					case strings.HasPrefix(rawLines, "FROM:"):
-						decodedStr, err := DecodeMimeContent(strings.TrimPrefix(rawLines, "FROM:"))
-						if err != nil {
-							return nil, err
-						}
-						email.From = decodedStr
-					case strings.HasPrefix(rawLines, "SUBJECT:"):
-						decodedStr, err := DecodeMimeContent(strings.TrimPrefix(rawLines, "SUBJECT:"))
-						if err != nil {
-							return nil, err
-						}
-						subjectStrBuilder.WriteString(decodedStr)
-					case strings.HasPrefix(rawLines, "DATE:"):
-						parsedTime, err := mail.ParseDate(strings.TrimPrefix(rawLines, "DATE: "))
-						if err != nil {
-							return nil, err
-						}
-						email.Date = parsedTime
-					default:
-						decodedStr, err := DecodeMimeContent(rawLines)
-						if err != nil {
-							return nil, err
-						}
-						subjectStrBuilder.WriteString(decodedStr)
+				if letter == '}' {
+					end = index
+					contentLength, err := strconv.Atoi(block[contentLengthStart+1 : end])
+					if err != nil {
+						return nil, err
 					}
+					raw := block[end+1 : end+contentLength]
+					emailContents := strings.Split(raw, "\n")
+					email := repository.Email{}
+					email.Seq = int64(id)
+					var subjectStrBuilder strings.Builder
+					for _, rawLines := range emailContents {
+						rawLines = strings.TrimSpace(rawLines)
+						switch {
+						case strings.HasPrefix(rawLines, "From:"):
+							decodedStr, err := DecodeMimeContent(strings.TrimPrefix(rawLines, "From:"))
+							if err != nil {
+								return nil, err
+							}
+							email.Sender = decodedStr
+						case strings.HasPrefix(rawLines, "Subject:"):
+							decodedStr, err := DecodeMimeContent(strings.TrimPrefix(rawLines, "Subject:"))
+							if err != nil {
+								return nil, err
+							}
+							subjectStrBuilder.WriteString(decodedStr)
+						case strings.HasPrefix(rawLines, "Date:"):
+							parsedTime, err := mail.ParseDate(strings.TrimPrefix(rawLines, "Date: "))
+							if err != nil {
+								return nil, err
+							}
+							email.EmailDate = parsedTime
+						case strings.HasPrefix(rawLines, "FROM:"):
+							decodedStr, err := DecodeMimeContent(strings.TrimPrefix(rawLines, "FROM:"))
+							if err != nil {
+								return nil, err
+							}
+							email.Sender = decodedStr
+						case strings.HasPrefix(rawLines, "SUBJECT:"):
+							decodedStr, err := DecodeMimeContent(strings.TrimPrefix(rawLines, "SUBJECT:"))
+							if err != nil {
+								return nil, err
+							}
+							subjectStrBuilder.WriteString(decodedStr)
+						case strings.HasPrefix(rawLines, "DATE:"):
+							parsedTime, err := mail.ParseDate(strings.TrimPrefix(rawLines, "DATE: "))
+							if err != nil {
+								return nil, err
+							}
+							email.EmailDate = parsedTime
+						default:
+							decodedStr, err := DecodeMimeContent(rawLines)
+							if err != nil {
+								return nil, err
+							}
+							subjectStrBuilder.WriteString(decodedStr)
+						}
+					}
+					email.Subject = subjectStrBuilder.String()
+					contents = append(contents, email)
+					break
 				}
-				email.Subject = subjectStrBuilder.String()
-				contents = append(contents, email)
-				break
 			}
+
 		}
 	}
 	return contents, nil
@@ -125,6 +131,20 @@ func findEmailBox(content string) ([]string, error) {
 		}
 	}
 	return categories, nil
+}
+func findModSeq(content []string) (int, error) {
+	for _, line := range content {
+		if len(line) < 2 || !strings.Contains(line, "FETCH") {
+			continue
+		}
+		index := strings.Index(line, "MODSEQ")
+		result, err := strconv.Atoi(line[index+8 : len(line)-3])
+		if err != nil {
+			return 0, err
+		}
+		return result, nil
+	}
+	return 0, nil
 }
 
 func DecodeModifiedUTF7(s string) (string, error) {
@@ -180,7 +200,6 @@ func DecodeModifiedUTF7(s string) (string, error) {
 			i++
 		}
 	}
-
 	return result.String(), nil
 }
 

@@ -2,8 +2,8 @@ package mails
 
 import (
 	"bufio"
+	"context"
 	"crypto/tls"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -13,6 +13,7 @@ import (
 	"strings"
 
 	"github.com/milkymilky0116/jellyfish/internal/db"
+	"github.com/milkymilky0116/jellyfish/internal/repository"
 )
 
 func InitMailClient(url string, repo db.IRepository) (*MailClient, error) {
@@ -31,37 +32,65 @@ func InitMailClient(url string, repo db.IRepository) (*MailClient, error) {
 	if err != nil {
 		return nil, err
 	}
-	for key, value := range mailsClient.Emails {
-		err := mailsClient.SelectMailBox(key)
+	for name, category := range mailsClient.Emails {
+		// 1. Iterate Each Category, select mailbox
+		err = mailsClient.SelectMailBox(name)
 		if err != nil {
 			return nil, err
 		}
-
-		if data, err := mailsClient.CacheRepository.Get(key); err != nil {
-			log.Println("Not caching..")
-			err = mailsClient.FetchMail(value, 1, 10)
+		existedCategory, err := mailsClient.CacheRepository.GetCategory(context.TODO(), name)
+		if err != nil {
+			// 2. if category does not exists on db, create new category, caching emails, save latest modseq
+			fmt.Println("Create new category, caching email..")
+			decodedName, err := DecodeModifiedUTF7(category.Name)
 			if err != nil {
 				return nil, err
 			}
-			bytes, err := json.Marshal(*value)
+			createCategoryParam := repository.CreateCategoryParams{
+				Name:   decodedName,
+				Key:    category.Name,
+				Modseq: int64(category.TotalMails),
+			}
+			newCategory, err := mailsClient.CacheRepository.CreateCategory(context.TODO(), createCategoryParam)
 			if err != nil {
 				return nil, err
 			}
-			err = mailsClient.CacheRepository.Set(key, bytes)
+			err = mailsClient.FetchMail(category)
 			if err != nil {
 				return nil, err
+			}
+			for _, mail := range category.Mails {
+				createEmailParam := repository.CreateEmailParams{
+					Seq:       mail.Seq,
+					Sender:    mail.Sender,
+					Subject:   mail.Subject,
+					EmailDate: mail.EmailDate,
+				}
+				newEmail, err := mailsClient.CacheRepository.CreateEmail(context.TODO(), createEmailParam)
+				if err != nil {
+					return nil, err
+				}
+				registerEmailCategoryParam := repository.RegisterEmailAndCategoryParams{
+					EmailID:    newEmail.ID,
+					CategoryID: newCategory.ID,
+				}
+				err = mailsClient.CacheRepository.RegisterEmailAndCategory(context.TODO(), registerEmailCategoryParam)
+				if err != nil {
+					return nil, err
+				}
 			}
 		} else {
-			log.Println("Cached..")
-			var category Category
-			err = json.Unmarshal(data, &category)
+			fmt.Println("Category Already Cached")
+			// 3. if exists, search latest modseq
+
+			_, err = mailsClient.FindUpdatedEmail(int(existedCategory.Modseq))
 			if err != nil {
 				return nil, err
 			}
-			mailsClient.Emails[key] = &category
+			// 4. if modseq is not equal to db's modseq, then search updated emails
+			// 5. update db
 		}
 	}
-
 	return mailsClient, nil
 }
 
@@ -106,8 +135,34 @@ func (m *MailClient) ListMailBox() error {
 	return nil
 }
 
+func (m *MailClient) FindModSeq() (int, error) {
+	code, err := m.SendMessage("FETCH", fmt.Sprintf("* (MODSEQ)"))
+
+	if err != nil {
+		return 0, err
+	}
+	seq, err := m.ReadModSeqMessage(code)
+	if err != nil {
+		return 0, err
+	}
+
+	return seq, nil
+}
+
+func (m *MailClient) FindUpdatedEmail(seq int) ([]int, error) {
+	code, err := m.SendMessage("SEARCH", fmt.Sprintf("MODSEQ %d", seq))
+	if err != nil {
+		return nil, err
+	}
+	err = m.ReadMessage(code)
+	if err != nil {
+		return nil, err
+	}
+	return nil, nil
+}
+
 func (m *MailClient) SelectMailBox(mailbox string) error {
-	code, err := m.SendMessage("SELECT", fmt.Sprintf("\"%s\"", mailbox))
+	code, err := m.SendMessage("SELECT", fmt.Sprintf("\"%s\" (CONDSTORE)", mailbox))
 	if err != nil {
 		return err
 	}
@@ -119,14 +174,14 @@ func (m *MailClient) SelectMailBox(mailbox string) error {
 	return nil
 }
 
-func (m *MailClient) FetchMail(category *Category, page, offset int) error {
+func (m *MailClient) FetchMail(category *Category) error {
 	if category.TotalMails == 0 {
 		return nil
 	}
-	start := category.TotalMails - ((page - 1) * offset)
-	end := max(start-offset+1, 1)
+	// start := category.TotalMails - ((page - 1) * offset)
+	// end := max(start-offset+1, 1)
 
-	code, err := m.SendMessage("FETCH", fmt.Sprintf("%d:%d (BODY[HEADER.FIELDS (SUBJECT FROM DATE)])", end, start))
+	code, err := m.SendMessage("FETCH", "1:* (BODY[HEADER.FIELDS (SUBJECT FROM DATE)])")
 	if err != nil {
 		return err
 	}
@@ -140,7 +195,7 @@ func (m *MailClient) FetchMail(category *Category, page, offset int) error {
 func (m *MailClient) SendMessage(msgType, msg string) (string, error) {
 	code := m.NextTag()
 	imapMsg := fmt.Sprintf("%s %s %s\r\n", code, msgType, msg)
-	log.Println(imapMsg)
+	fmt.Println(imapMsg)
 	if _, err := m.Writer.WriteString(imapMsg); err != nil {
 		return "", err
 	}
@@ -152,10 +207,15 @@ func (m *MailClient) ReadSelectMessage(inbox, code string) error {
 	if err != nil {
 		return err
 	}
+	for _, block := range content {
+		fmt.Println(block)
+	}
 	for _, line := range content {
 		line = strings.TrimSpace(line)
-		if strings.Contains(line, "EXISTS") {
-			totalMails, err := strconv.Atoi(line[2 : len(line)-7])
+		if strings.Contains(line, "HIGHESTMODSEQ") {
+			index := strings.Index(line, "HIGHESTMODSEQ")
+			num := line[index+len("HIGHESTMODSEQ")+1 : len(line)-1]
+			totalMails, err := strconv.Atoi(num)
 			if err != nil {
 				return err
 			}
@@ -178,7 +238,6 @@ func (m *MailClient) ReadFetchMessage(inbox, code string) error {
 	if err != nil {
 		return err
 	}
-	fmt.Println(emailContents)
 	if entry, ok := m.Emails[inbox]; ok {
 		entry.Mails = emailContents
 		m.Emails[inbox] = entry
@@ -197,15 +256,30 @@ func (m *MailClient) ReadListMessage(code string) error {
 		return err
 	}
 	for _, category := range categories {
-		m.Emails[category] = &Category{Name: category, Mails: []Email{}}
+		m.Emails[category] = &Category{Name: category, Mails: []repository.Email{}}
 	}
 	return nil
 }
 
+func (m *MailClient) ReadModSeqMessage(code string) (int, error) {
+	content, _, err := m.ParseIMAPContent(code)
+	if err != nil {
+		return 0, err
+	}
+	latestSeq, err := findModSeq(content)
+	if err != nil {
+		return 0, err
+	}
+	return latestSeq, nil
+}
+
 func (m *MailClient) ReadMessage(code string) error {
-	_, _, err := m.ParseIMAPContent(code)
+	content, _, err := m.ParseIMAPContent(code)
 	if err != nil {
 		return err
+	}
+	for _, block := range content {
+		fmt.Println(block)
 	}
 	return nil
 }

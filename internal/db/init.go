@@ -1,11 +1,14 @@
 package db
 
 import (
-	"github.com/dgraph-io/badger/v4"
+	"context"
+	"database/sql"
+
+	_ "github.com/mattn/go-sqlite3"
 )
 
-func InitBadgerDB() (*badger.DB, error) {
-	db, err := badger.Open(badger.DefaultOptions("."))
+func InitSqliteDB(ctx context.Context) (*sql.DB, error) {
+	db, err := sql.Open("sqlite3", "test.db")
 	if err != nil {
 		return nil, err
 	}
