@@ -18,7 +18,7 @@ func main() {
 		log.Fatal(err)
 	}
 	repo := repository.New(db)
-	client, err := mails.InitMailClient(server, repo)
+	client, err := mails.InitMailClient(server, repo, db)
 	if err != nil {
 		log.Fatal(err)
 	}

@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"crypto/tls"
+	"database/sql"
 	"errors"
 	"fmt"
 	"io"
@@ -16,14 +17,14 @@ import (
 	"github.com/milkymilky0116/jellyfish/internal/repository"
 )
 
-func InitMailClient(url string, repo db.IRepository) (*MailClient, error) {
+func InitMailClient(url string, repo db.IRepository, db *sql.DB) (*MailClient, error) {
 	conn, err := tls.Dial("tcp", url, nil)
 	if err != nil {
 		return nil, err
 	}
 
 	fmt.Println("✅ Connect to IMAP Server", conn.RemoteAddr())
-	mailsClient := InitMails(conn, repo)
+	mailsClient := InitMails(conn, repo, db)
 	err = mailsClient.Login()
 	if err != nil {
 		return nil, err
@@ -59,14 +60,21 @@ func InitMailClient(url string, repo db.IRepository) (*MailClient, error) {
 			if err != nil {
 				return nil, err
 			}
+
 			for _, mail := range category.Mails {
+				tx, err := db.Begin()
+				if err != nil {
+					return nil, err
+				}
+				defer tx.Rollback()
+				qtx := repo.WithTx(tx)
 				createEmailParam := repository.CreateEmailParams{
 					Seq:       mail.Seq,
 					Sender:    mail.Sender,
 					Subject:   mail.Subject,
 					EmailDate: mail.EmailDate,
 				}
-				newEmail, err := mailsClient.CacheRepository.CreateEmail(context.TODO(), createEmailParam)
+				newEmail, err := qtx.CreateEmail(context.TODO(), createEmailParam)
 				if err != nil {
 					return nil, err
 				}
@@ -74,11 +82,15 @@ func InitMailClient(url string, repo db.IRepository) (*MailClient, error) {
 					EmailID:    newEmail.ID,
 					CategoryID: newCategory.ID,
 				}
-				err = mailsClient.CacheRepository.RegisterEmailAndCategory(context.TODO(), registerEmailCategoryParam)
+				err = qtx.RegisterEmailAndCategory(context.TODO(), registerEmailCategoryParam)
 				if err != nil {
 					return nil, err
 				}
+				if err := tx.Commit(); err != nil {
+					return nil, err
+				}
 			}
+
 		} else {
 			fmt.Println("Category Already Cached")
 			// 3. if exists, search latest modseq
@@ -94,11 +106,12 @@ func InitMailClient(url string, repo db.IRepository) (*MailClient, error) {
 	return mailsClient, nil
 }
 
-func InitMails(conn *tls.Conn, repo db.IRepository) *MailClient {
+func InitMails(conn *tls.Conn, repo db.IRepository, db *sql.DB) *MailClient {
 	return &MailClient{
 		Writer:          bufio.NewWriter(conn),
 		Reader:          bufio.NewReader(conn),
 		Conn:            conn,
+		DB:              db,
 		ClienEmail:      os.Getenv("IMAP_EMAIL"),
 		ClientPassword:  os.Getenv("IMAP_PASSWORD"),
 		CacheRepository: repo,

@@ -2,6 +2,7 @@ package db
 
 import (
 	"context"
+	"database/sql"
 
 	"github.com/milkymilky0116/jellyfish/internal/repository"
 )
@@ -12,4 +13,5 @@ type IRepository interface {
 	CreateCategory(context.Context, repository.CreateCategoryParams) (repository.Category, error)
 	GetCategory(context.Context, string) (repository.Category, error)
 	RegisterEmailAndCategory(context.Context, repository.RegisterEmailAndCategoryParams) error
+	WithTx(tx *sql.Tx) *repository.Queries
 }

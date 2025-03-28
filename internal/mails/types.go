@@ -3,6 +3,7 @@ package mails
 import (
 	"bufio"
 	"crypto/tls"
+	"database/sql"
 
 	"github.com/milkymilky0116/jellyfish/internal/db"
 	"github.com/milkymilky0116/jellyfish/internal/repository"
@@ -15,6 +16,7 @@ type MailClient struct {
 	Writer          *bufio.Writer
 	Reader          *bufio.Reader
 	Conn            *tls.Conn
+	DB              *sql.DB
 	CurrentMailBox  string
 	Emails          map[string]*Category
 	CacheRepository db.IRepository
